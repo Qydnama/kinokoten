@@ -88,26 +88,16 @@ uv run python -m app
 
 ## Деплой на JustRunMy.App
 
-Соберите архив:
+Откройте приложение в панели, перейдите в **Deployment → Deploy from Git**,
+скопируйте выданную команду и выполните её из корня репозитория:
 
 ```bash
-uv run python scripts/build_deploy_zip.py
-uv run python scripts/inspect_deploy_zip.py
+git push -u <адрес-из-панели> HEAD:deploy
 ```
 
-Загрузите `dist/kino-ticket-bot.zip` через **Zip Upload**, выберите Python и
-укажите команду, если панель попросит её вручную:
-
-```text
-python -m app
-```
-
-Для постоянного хранилища:
-
-```dotenv
-DATA_DIR=/data
-DATABASE_URL=sqlite+aiosqlite:////data/bot.db
-```
+Run command в настройках приложения оставьте пустой: контейнер использует
+команду из `Dockerfile`, сам подготавливает постоянное хранилище в `/app` и
+применяет миграции перед запуском бота.
 
 Публичный порт не нужен: бот работает через Telegram long polling. После первого
 запуска создайте подписку, перезапустите приложение и проверьте, что она

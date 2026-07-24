@@ -2,9 +2,9 @@ FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PATH="/app/.venv/bin:$PATH"
+    PATH="/opt/kinokoten/.venv/bin:$PATH"
 
-WORKDIR /app
+WORKDIR /opt/kinokoten
 
 RUN pip install --no-cache-dir uv
 
@@ -14,12 +14,8 @@ RUN uv sync --frozen --no-dev --no-editable
 
 COPY alembic.ini ./
 COPY alembic ./alembic
+COPY docker-entrypoint.sh /usr/local/bin/kinokoten-entrypoint
 
-RUN groupadd --system bot \
-    && useradd --system --gid bot --home-dir /app bot \
-    && mkdir -p /app/data \
-    && chown -R bot:bot /app
+RUN chmod +x /usr/local/bin/kinokoten-entrypoint
 
-USER bot
-
-CMD ["python", "-m", "app"]
+CMD ["kinokoten-entrypoint"]
