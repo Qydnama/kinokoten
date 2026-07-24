@@ -22,5 +22,4 @@ RUN groupadd --system bot \
 
 USER bot
 
-CMD ["sh", "-c", "alembic upgrade head && python -m app"]
-
+CMD ["python", "-m", "app"]

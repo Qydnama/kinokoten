@@ -49,12 +49,13 @@ DATA_DIR=./data
 DATABASE_URL=sqlite+aiosqlite:///./data/bot.db
 ```
 
-Примените миграции и запустите бота:
+Запустите бота:
 
 ```bash
-uv run alembic upgrade head
 uv run python -m app
 ```
+
+Миграции применяются автоматически перед запуском Telegram polling.
 
 В один момент должен работать только один экземпляр бота с этим токеном.
 
@@ -95,10 +96,10 @@ uv run python scripts/inspect_deploy_zip.py
 ```
 
 Загрузите `dist/kino-ticket-bot.zip` через **Zip Upload**, выберите Python и
-укажите команду:
+укажите команду, если панель попросит её вручную:
 
 ```text
-sh -c "python -m alembic upgrade head && python -m app"
+python -m app
 ```
 
 Для постоянного хранилища:
@@ -153,4 +154,3 @@ tests/                  unit и integration tests
 SQLite запускается с foreign keys, WAL и `busy_timeout`. Запросы к Kino.kz
 группируются по городу и датам, поэтому количество подписок не превращается в
 такое же количество одинаковых HTTP-запросов.
-
