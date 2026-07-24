@@ -42,7 +42,7 @@ uv sync --frozen
 TELEGRAM_BOT_TOKEN=token_from_botfather
 ADMIN_TELEGRAM_ID=123456789
 
-PRIVATE_MODE=true
+PRIVATE_MODE=false
 ALLOWED_TELEGRAM_USER_IDS=123456789
 
 DATA_DIR=./data
@@ -98,6 +98,10 @@ git push -u <адрес-из-панели> HEAD:deploy
 Run command в настройках приложения оставьте пустой: контейнер использует
 команду из `Dockerfile`, сам подготавливает постоянное хранилище в `/app` и
 применяет миграции перед запуском бота.
+
+Для публичного бота установите `PRIVATE_MODE=false`. Значение `true` включает
+allowlist и разрешает пользоваться ботом только администратору и ID из
+`ALLOWED_TELEGRAM_USER_IDS`.
 
 Публичный порт не нужен: бот работает через Telegram long polling. После первого
 запуска создайте подписку, перезапустите приложение и проверьте, что она
