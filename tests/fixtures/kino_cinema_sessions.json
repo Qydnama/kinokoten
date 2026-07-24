@@ -1,0 +1,2 @@
+{"result":{"data":{"json":{"available_dates":["2026-07-24"],"sessions":[{"movie":{"id":12175,"name":"Одиссея","name_origin":"The Odyssey"},"items":[{"session":{"id":502512729,"session_id":6521857,"cinema_id":144,"movie_id":12175,"hall_id":1030,"lang_label":"рус","adult":4000,"child":0,"student":3400,"vip":0,"session_date":"2026-07-24T00:00:00Z","hour":"21","minutes":"00","is_3_d":false,"is_atmos":false,"is_imax":true,"is_fdx":false},"hall":{"id":1030,"name":"Зал 3","imax":true,"laser":false}}]}]}}}}
+
