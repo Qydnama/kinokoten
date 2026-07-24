@@ -8,7 +8,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.dto import SessionDTO
-from app.domain.enums import SubscriptionStatus
+from app.domain.enums import CinemaScope, SubscriptionStatus
 from app.domain.services.monitoring_service import NotificationJob
 from app.integrations.kino.links import movie_url
 from app.persistence.database import session_scope
@@ -85,6 +85,9 @@ class NotificationService:
             f"«{escape_html(job.movie_title)}»",
             format_date_ru(job.target_date),
         ]
+        if job.cinema_scope == CinemaScope.SELECTED:
+            tracked_names = ", ".join(escape_html(cinema.name) for cinema in job.cinemas)
+            lines.extend(["", f"Отслеживаемые кинотеатры: {tracked_names}"])
         cinema_names = {cinema.id: cinema.name for cinema in job.cinemas}
         grouped: dict[int, list[SessionDTO]] = defaultdict(list)
         for session in job.sessions:

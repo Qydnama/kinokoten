@@ -67,3 +67,11 @@ class CatalogRepository:
             else:
                 for key, value in values.items():
                     setattr(model, key, value)
+
+    async def get_cinemas_by_ids(self, cinema_ids: set[int]) -> list[Cinema]:
+        if not cinema_ids:
+            return []
+        result = await self._session.scalars(
+            select(Cinema).where(Cinema.kino_cinema_id.in_(cinema_ids)).order_by(Cinema.name)
+        )
+        return list(result.all())

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date
+from typing import Any
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -34,7 +35,7 @@ from app.integrations.kino.cities import CITY_BY_ID
 from app.persistence.database import session_scope
 from app.persistence.repositories.subscriptions import SubscriptionsRepository
 from app.persistence.repositories.users import UsersRepository
-from app.utils.dates import local_today
+from app.utils.dates import format_date_ru, local_today
 from app.utils.html import escape_html
 
 router = Router(name=__name__)
@@ -269,27 +270,44 @@ async def cinemas_done(query: CallbackQuery, state: FSMContext) -> None:
 async def show_confirmation(query: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
     await state.set_state(WatchStates.confirm_subscription)
-    title = data.get("movie_name") or data["raw_query"]
-    mode = TrackingMode(data["tracking_mode"])
-    mode_text = {
-        TrackingMode.FIRST_AVAILABLE: "первые доступные билеты",
-        TrackingMode.EXACT_DATE: f"дата {data['date_from']}",
-        TrackingMode.DATE_RANGE: f"{data['date_from']} — {data['date_to']}",
-    }[mode]
-    scope_text = (
-        "все кинотеатры"
-        if data["cinema_scope"] == CinemaScope.ALL
-        else f"выбрано: {len(data.get('selected_cinema_ids', []))}"
-    )
-    text = (
-        "<b>Проверьте отслеживание</b>\n\n"
-        f"Фильм: {escape_html(str(title))}\n"
-        f"Город: {escape_html(str(data['city_name']))}\n"
-        f"Режим: {escape_html(mode_text)}\n"
-        f"Кинотеатры: {escape_html(scope_text)}"
-    )
+    text = format_draft_summary(data, "<b>Проверьте отслеживание</b>")
     if isinstance(query.message, Message):
         await query.message.edit_text(text, reply_markup=confirm_keyboard())
+
+
+def format_draft_summary(data: dict[str, Any], heading: str) -> str:
+    title = data.get("movie_name") or data["raw_query"]
+    mode = TrackingMode(data["tracking_mode"])
+    date_from = date.fromisoformat(str(data["date_from"])) if data.get("date_from") else None
+    date_to = date.fromisoformat(str(data["date_to"])) if data.get("date_to") else None
+    mode_text = {
+        TrackingMode.FIRST_AVAILABLE: "первые доступные билеты",
+        TrackingMode.EXACT_DATE: (
+            format_date_ru(date_from) if date_from is not None else "конкретная дата"
+        ),
+        TrackingMode.DATE_RANGE: (
+            f"{format_date_ru(date_from)} — {format_date_ru(date_to)}"
+            if date_from is not None and date_to is not None
+            else "диапазон дат"
+        ),
+    }[mode]
+    if data["cinema_scope"] == CinemaScope.ALL:
+        cinema_text = "все кинотеатры города"
+    else:
+        selected_ids = {int(value) for value in data.get("selected_cinema_ids", [])}
+        cinema_names = [
+            str(cinema["name"])
+            for cinema in data.get("cinemas", [])
+            if int(cinema["id"]) in selected_ids
+        ]
+        cinema_text = "\n".join(f"• {escape_html(name)}" for name in cinema_names)
+    return (
+        f"{heading}\n\n"
+        f"Фильм: {escape_html(str(title))}\n"
+        f"Город: {escape_html(str(data['city_name']))}\n"
+        f"Когда: {escape_html(mode_text)}\n\n"
+        f"<b>Кинотеатры:</b>\n{cinema_text}"
+    )
 
 
 @router.callback_query(
@@ -327,11 +345,17 @@ async def confirm(
             date_to=date.fromisoformat(data["date_to"]) if data.get("date_to") else None,
             selected_cinema_ids=tuple(int(value) for value in data.get("selected_cinema_ids", [])),
         )
+    summary = format_draft_summary(
+        data,
+        (
+            f"✅ <b>{'Отслеживание создано' if created else 'Отслеживание уже было создано'}</b>"
+            f"\nНомер: <code>{subscription.id}</code>"
+        ),
+    )
     await state.clear()
     await query.answer("Готово")
     if isinstance(query.message, Message):
-        prefix = "Отслеживание создано" if created else "Отслеживание уже было создано"
-        await query.message.edit_text(f"✅ {prefix}. Номер: <code>{subscription.id}</code>")
+        await query.message.edit_text(summary)
 
 
 @router.callback_query(DraftActionCallback.filter(F.action == "cancel"))

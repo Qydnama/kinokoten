@@ -31,6 +31,7 @@ class NotificationJob:
     movie_id: int
     movie_title: str
     target_date: date
+    cinema_scope: CinemaScope
     cinemas: tuple[CinemaDTO, ...]
     sessions: tuple[SessionDTO, ...]
 
@@ -182,6 +183,8 @@ class MonitoringService:
             if subscription.cinema_scope == CinemaScope.ALL or cinema.id in selected_ids
         ]
         sessions: list[SessionDTO] = []
+        enrichment_failed = False
+        enrichment_error_code = "KinoError"
         try:
             schedules = await asyncio.gather(
                 *(self._source.get_cinema_sessions(cinema.id, target_date) for cinema in cinemas)
@@ -190,11 +193,31 @@ class MonitoringService:
                 for movie_group in schedule.movies:
                     if movie_group.movie.id == movie_id:
                         sessions.extend(movie_group.sessions)
-        except KinoError:
+        except KinoError as exc:
+            enrichment_failed = True
+            enrichment_error_code = type(exc).__name__
             logger.warning(
-                "schedule enrichment failed subscription_id=%s; sending fallback",
+                "schedule enrichment failed subscription_id=%s",
                 subscription.id,
             )
+        if enrichment_failed and subscription.cinema_scope == CinemaScope.SELECTED:
+            logger.warning(
+                "selected cinema schedules unavailable; suppressing city-level fallback "
+                "subscription_id=%s",
+                subscription.id,
+            )
+            await self._mark_error(subscription.id, enrichment_error_code)
+            return None
+        if not sessions and not enrichment_failed:
+            logger.info(
+                "movie exists in city but not in tracked cinemas subscription_id=%s "
+                "cinema_ids=%s target_date=%s",
+                subscription.id,
+                sorted(cinema.id for cinema in cinemas),
+                target_date,
+            )
+            await self._mark_success(subscription.id)
+            return None
         async with session_scope(self._session_factory) as session:
             current = await session.get(Subscription, subscription.id)
             if current is None:
@@ -215,6 +238,7 @@ class MonitoringService:
                 movie_id=movie_id,
                 movie_title=subscription.movie_title or subscription.raw_query,
                 target_date=target_date,
+                cinema_scope=subscription.cinema_scope,
                 cinemas=tuple(cinemas),
                 sessions=tuple(
                     sorted(sessions, key=lambda item: (item.cinema_id, item.hour, item.minute))

@@ -18,7 +18,7 @@ EXCLUDED_DIRS = {
     "tests",
     "backups",
 }
-EXCLUDED_NAMES = {".env", ".coverage", "docker-compose.yml"}
+EXCLUDED_NAMES = {".env", ".env.example", ".coverage", "docker-compose.yml"}
 EXCLUDED_SUFFIXES = {".db", ".log", ".pyc", ".pyo"}
 
 
