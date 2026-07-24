@@ -7,7 +7,19 @@ from app.persistence.models import Subscription
 
 def subscription_actions(subscription: Subscription) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
-    if subscription.status == SubscriptionStatus.PAUSED:
+    if subscription.status == SubscriptionStatus.NOTIFIED:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="▶️ Продолжить отслеживание",
+                    callback_data=SubscriptionActionCallback(
+                        action="continue",
+                        subscription_id=subscription.id,
+                    ).pack(),
+                )
+            ]
+        )
+    elif subscription.status == SubscriptionStatus.PAUSED:
         rows.append(
             [
                 InlineKeyboardButton(
