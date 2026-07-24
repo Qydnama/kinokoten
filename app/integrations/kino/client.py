@@ -102,19 +102,29 @@ class KinoKzClient:
             "x-trpc-source": "nextjs-react",
             "user-agent": "KinoTicketWatcher/1.0",
         }
-        cookies = {"city": str(city_id)} if city_id is not None else None
         last_error: Exception | None = None
         last_status: int | None = None
 
         for attempt in range(1, self._max_retries + 1):
             started = time.monotonic()
             try:
-                response = await self._client.get(
+                request = self._client.build_request(
+                    "GET",
                     f"{self._base_url}/api/trpc/{procedure}",
                     params=params,
                     headers=headers,
-                    cookies=cookies,
                 )
+                if city_id is not None:
+                    request.headers.pop("cookie", None)
+                    request_cookies = httpx.Cookies(self._client.cookies)
+                    request_cookies.set(
+                        "city",
+                        str(city_id),
+                        domain="kino.kz",
+                        path="/",
+                    )
+                    request_cookies.set_cookie_header(request)
+                response = await self._client.send(request)
                 last_status = response.status_code
                 duration_ms = round((time.monotonic() - started) * 1000)
                 logger.info(
