@@ -15,4 +15,8 @@ case "${DATABASE_URL:-}" in
         ;;
 esac
 
+# Run migrations in a short-lived process so Alembic does not stay in the
+# bot's memory. This matters on small hosting plans.
+python -m alembic -c /opt/kinokoten/alembic.ini upgrade head
+
 exec python -m app
