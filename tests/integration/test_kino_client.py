@@ -81,3 +81,64 @@ async def test_missing_required_field_raises_schema_error() -> None:
     async with httpx.AsyncClient() as http_client:
         with pytest.raises(KinoSchemaError):
             await KinoKzClient(http_client, max_retries=1).get_cinemas(1)
+
+
+@respx.mock
+async def test_ticket_availability_requires_open_sale_and_free_seat() -> None:
+    route = respx.get("https://api.kino.kz/new-mediator/seances/hall-plan-prices").mock(
+        side_effect=[
+            httpx.Response(
+                200,
+                json={
+                    "status": False,
+                    "message": "Кинотеатр на данный момент недоступен",
+                    "result": [],
+                },
+            ),
+            httpx.Response(
+                200,
+                json={
+                    "status": True,
+                    "message": "success",
+                    "result": {
+                        "hall_plan": {"places": [{"status": 3}, {"status": 4}]},
+                        "prices": [{"price": 4000}],
+                    },
+                },
+            ),
+            httpx.Response(
+                200,
+                json={
+                    "status": True,
+                    "message": "success",
+                    "result": {
+                        "hall_plan": {"places": [{"status": 3}, {"status": 1}]},
+                        "prices": [{"price": 4000}],
+                    },
+                },
+            ),
+        ]
+    )
+    async with httpx.AsyncClient() as http_client:
+        client = KinoKzClient(http_client, max_retries=1)
+        assert not await client.is_session_purchasable(1, 6535018)
+        assert not await client.is_session_purchasable(1, 6535018)
+        assert await client.is_session_purchasable(1, 6535018)
+
+    assert route.call_count == 3
+    for call in route.calls:
+        assert call.request.url.params["city_id"] == "1"
+        assert call.request.url.params["seance_id"] == "6535018"
+
+
+@respx.mock
+async def test_ticket_availability_rejects_unexpected_response() -> None:
+    respx.get("https://api.kino.kz/new-mediator/seances/hall-plan-prices").mock(
+        return_value=httpx.Response(200, json={"message": "missing status"})
+    )
+    async with httpx.AsyncClient() as http_client:
+        with pytest.raises(KinoSchemaError):
+            await KinoKzClient(
+                http_client,
+                max_retries=1,
+            ).is_session_purchasable(1, 6535018)

@@ -43,10 +43,12 @@ class SessionDTO:
     student_price: int | None = None
     vip_price: int | None = None
     formats: tuple[str, ...] = field(default_factory=tuple)
+    purchase_verified: bool = False
 
     @property
     def source_key(self) -> str:
-        return f"kino:{self.cinema_id}:{self.movie_id}:{self.session_id}"
+        key = f"kino:{self.cinema_id}:{self.movie_id}:{self.session_id}"
+        return f"{key}:sale-open" if self.purchase_verified else key
 
     @property
     def minimum_price(self) -> int | None:

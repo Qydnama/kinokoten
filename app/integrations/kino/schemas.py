@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -66,3 +67,8 @@ class MovieSessionGroupSchema(KinoModel):
 class CinemaScheduleSchema(KinoModel):
     available_dates: list[date] = Field(default_factory=list)
     sessions: list[MovieSessionGroupSchema] = Field(default_factory=list)
+
+
+class TicketAvailabilitySchema(KinoModel):
+    status: bool
+    result: Any = None

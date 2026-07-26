@@ -36,5 +36,6 @@ def test_notification_escapes_external_text_and_formats_price() -> None:
     assert "&lt;Одиссея&gt;" in text
     assert "Cinema &amp; Hall" in text
     assert "Отслеживаемые кинотеатры" in text
+    assert "Продажа открыта" in text
     assert "от 4 000 ₸" in text
     assert "18:30" in text

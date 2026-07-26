@@ -19,7 +19,12 @@ from app.integrations.kino.exceptions import (
     KinoUnavailableError,
 )
 from app.integrations.kino.mapper import map_cinema, map_movie, map_schedule
-from app.integrations.kino.schemas import CinemaScheduleSchema, CinemaSchema, MovieSchema
+from app.integrations.kino.schemas import (
+    CinemaScheduleSchema,
+    CinemaSchema,
+    MovieSchema,
+    TicketAvailabilitySchema,
+)
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -31,10 +36,12 @@ class KinoKzClient:
         client: httpx.AsyncClient,
         *,
         base_url: str = "https://kino.kz",
+        api_base_url: str = "https://api.kino.kz",
         max_retries: int = 3,
     ) -> None:
         self._client = client
         self._base_url = base_url.rstrip("/")
+        self._api_base_url = api_base_url.rstrip("/")
         self._max_retries = max_retries
 
     async def get_cinemas(self, city_id: int) -> list[CinemaDTO]:
@@ -77,6 +84,38 @@ class KinoKzClient:
             raise KinoSchemaError("Unexpected cinema.getSessions response") from exc
         return map_schedule(cinema_id, target_date, schedule)
 
+    async def is_session_purchasable(self, city_id: int, session_id: int) -> bool:
+        document = await self._get_json(
+            "ticket availability",
+            f"{self._api_base_url}/new-mediator/seances/hall-plan-prices",
+            {
+                "city_id": str(city_id),
+                "seance_id": str(session_id),
+            },
+            {
+                "accept": "application/json",
+                "accept-language": "ru",
+                "origin": self._base_url,
+                "referer": f"{self._base_url}/",
+                "user-agent": "KinoTicketWatcher/1.0",
+            },
+        )
+        try:
+            availability = TicketAvailabilitySchema.model_validate(document)
+        except ValidationError as exc:
+            raise KinoSchemaError("Unexpected ticket availability response") from exc
+        if not availability.status or not isinstance(availability.result, dict):
+            return False
+
+        hall_plan = availability.result.get("hall_plan")
+        prices = availability.result.get("prices")
+        if not isinstance(hall_plan, dict) or not isinstance(prices, list) or not prices:
+            return False
+        places = hall_plan.get("places")
+        if not isinstance(places, list):
+            return False
+        return any(isinstance(place, dict) and place.get("status") == 1 for place in places)
+
     @staticmethod
     def _validate_list(payload: Any, schema: type[T]) -> list[T]:
         try:
@@ -102,6 +141,27 @@ class KinoKzClient:
             "x-trpc-source": "nextjs-react",
             "user-agent": "KinoTicketWatcher/1.0",
         }
+        document = await self._get_json(
+            procedure,
+            f"{self._base_url}/api/trpc/{procedure}",
+            params,
+            headers,
+            city_id=city_id,
+        )
+        try:
+            return document["result"]["data"]["json"]
+        except (KeyError, TypeError) as exc:
+            raise KinoSchemaError("Unexpected tRPC envelope from Kino.kz") from exc
+
+    async def _get_json(
+        self,
+        operation: str,
+        url: str,
+        params: dict[str, str],
+        headers: dict[str, str],
+        *,
+        city_id: int | None = None,
+    ) -> Any:
         last_error: Exception | None = None
         last_status: int | None = None
 
@@ -110,7 +170,7 @@ class KinoKzClient:
             try:
                 request = self._client.build_request(
                     "GET",
-                    f"{self._base_url}/api/trpc/{procedure}",
+                    url,
                     params=params,
                     headers=headers,
                 )
@@ -128,8 +188,8 @@ class KinoKzClient:
                 last_status = response.status_code
                 duration_ms = round((time.monotonic() - started) * 1000)
                 logger.info(
-                    "kino request procedure=%s status=%s duration_ms=%s attempt=%s",
-                    procedure,
+                    "kino request operation=%s status=%s duration_ms=%s attempt=%s",
+                    operation,
                     response.status_code,
                     duration_ms,
                     attempt,
@@ -141,19 +201,22 @@ class KinoKzClient:
                     break
                 if response.status_code >= 400:
                     raise KinoResponseError(
-                        f"Kino.kz returned HTTP {response.status_code} for {procedure}"
+                        f"Kino.kz returned HTTP {response.status_code} for {operation}"
                     )
                 content_type = response.headers.get("content-type", "").lower()
                 if "application/json" not in content_type:
                     raise KinoResponseError("Kino.kz returned a non-JSON response")
                 try:
-                    document = response.json()
-                    return document["result"]["data"]["json"]
-                except (ValueError, KeyError, TypeError) as exc:
-                    raise KinoSchemaError("Unexpected tRPC envelope from Kino.kz") from exc
+                    return response.json()
+                except ValueError as exc:
+                    raise KinoSchemaError("Kino.kz returned invalid JSON") from exc
             except (httpx.TimeoutException, httpx.NetworkError) as exc:
                 last_error = exc
-                logger.warning("kino connection error procedure=%s attempt=%s", procedure, attempt)
+                logger.warning(
+                    "kino connection error operation=%s attempt=%s",
+                    operation,
+                    attempt,
+                )
                 if attempt < self._max_retries:
                     await asyncio.sleep(self._retry_delay(attempt))
                     continue

@@ -84,6 +84,7 @@ class NotificationService:
             "",
             f"«{escape_html(job.movie_title)}»",
             format_date_ru(job.target_date),
+            "✅ Продажа открыта, на Kino.kz есть свободные места.",
         ]
         if job.cinema_scope == CinemaScope.SELECTED:
             tracked_names = ", ".join(escape_html(cinema.name) for cinema in job.cinemas)

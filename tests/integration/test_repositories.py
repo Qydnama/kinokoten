@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -87,5 +88,12 @@ async def test_session_dedupe_reserves_once(
             [session_dto],
             session_dto.session_date,
         )
+        verified = replace(session_dto, purchase_verified=True)
+        verified_sale = await repository.reserve(
+            subscription.id,
+            [verified],
+            verified.session_date,
+        )
 
     assert second is None
+    assert verified_sale is not None

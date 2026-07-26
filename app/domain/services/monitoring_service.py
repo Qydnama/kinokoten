@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -45,6 +45,7 @@ class WorkerHeartbeat:
 
 
 GroupKey = tuple[int, date, date]
+PURCHASE_CHECK_CONCURRENCY = 5
 
 
 def group_subscriptions(
@@ -79,6 +80,8 @@ class MonitoringService:
         self._settings = settings
         self.heartbeat = heartbeat
         self._cycle_lock = asyncio.Lock()
+        self._purchase_check_semaphore = asyncio.Semaphore(PURCHASE_CHECK_CONCURRENCY)
+        self._purchase_status_cache: dict[tuple[int, int], bool] = {}
 
     async def run_cycle(self) -> list[NotificationJob]:
         if self._cycle_lock.locked():
@@ -86,6 +89,7 @@ class MonitoringService:
             return []
         async with self._cycle_lock:
             started = utc_now()
+            self._purchase_status_cache.clear()
             self.heartbeat.last_cycle_started_at = started
             self.heartbeat.last_cycle_error = None
             try:
@@ -200,17 +204,32 @@ class MonitoringService:
                 "schedule enrichment failed subscription_id=%s",
                 subscription.id,
             )
-        if enrichment_failed and subscription.cinema_scope == CinemaScope.SELECTED:
+        if enrichment_failed:
             logger.warning(
-                "selected cinema schedules unavailable; suppressing city-level fallback "
-                "subscription_id=%s",
+                "cinema schedules unavailable; suppressing unverified notification "
+                "subscription_id=%s cinema_scope=%s",
                 subscription.id,
+                subscription.cinema_scope,
             )
             await self._mark_error(subscription.id, enrichment_error_code)
             return None
+        if sessions:
+            sessions, availability_errors = await self._purchasable_sessions(
+                subscription.city_id,
+                sessions,
+            )
+            if availability_errors and not sessions:
+                logger.warning(
+                    "ticket availability could not be confirmed subscription_id=%s errors=%s",
+                    subscription.id,
+                    availability_errors,
+                )
+                await self._mark_error(subscription.id, "KinoTicketAvailabilityError")
+                return None
         if not sessions and not enrichment_failed:
             logger.info(
-                "movie exists in city but not in tracked cinemas subscription_id=%s "
+                "movie exists but has no purchasable sessions in tracked cinemas "
+                "subscription_id=%s "
                 "cinema_ids=%s target_date=%s",
                 subscription.id,
                 sorted(cinema.id for cinema in cinemas),
@@ -244,6 +263,43 @@ class MonitoringService:
                     sorted(sessions, key=lambda item: (item.cinema_id, item.hour, item.minute))
                 ),
             )
+
+    async def _purchasable_sessions(
+        self,
+        city_id: int,
+        sessions: list[SessionDTO],
+    ) -> tuple[list[SessionDTO], int]:
+        results = await asyncio.gather(
+            *(self._check_purchase_status(city_id, item) for item in sessions),
+            return_exceptions=True,
+        )
+        purchasable: list[SessionDTO] = []
+        errors = 0
+        for session, result in zip(sessions, results, strict=True):
+            if isinstance(result, BaseException):
+                errors += 1
+                logger.warning(
+                    "ticket availability check failed city_id=%s session_id=%s error=%s",
+                    city_id,
+                    session.session_id,
+                    type(result).__name__,
+                )
+            elif result:
+                purchasable.append(replace(session, purchase_verified=True))
+        return purchasable, errors
+
+    async def _check_purchase_status(self, city_id: int, session: SessionDTO) -> bool:
+        key = (city_id, session.session_id)
+        cached = self._purchase_status_cache.get(key)
+        if cached is not None:
+            return cached
+        async with self._purchase_check_semaphore:
+            available = await self._source.is_session_purchasable(
+                city_id,
+                session.session_id,
+            )
+        self._purchase_status_cache[key] = available
+        return available
 
     async def _first_matching_date(
         self,
