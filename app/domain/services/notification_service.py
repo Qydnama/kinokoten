@@ -30,23 +30,28 @@ class NotificationService:
         self._session_factory = session_factory
 
     async def send(self, job: NotificationJob) -> bool:
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="Купить на Kino.kz", url=movie_url(job.movie_id))],
+        action_text = "Купить на Kino.kz" if job.purchase_available else "Открыть Kino.kz"
+        keyboard_rows = [
+            [InlineKeyboardButton(text=action_text, url=movie_url(job.movie_id))],
+        ]
+        if job.purchase_available:
+            keyboard_rows.append(
                 [
                     InlineKeyboardButton(
                         text="Продолжить отслеживание",
                         callback_data=f"sa:continue:{job.subscription_id}",
                     )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="Завершить",
-                        callback_data=f"sa:cancel:{job.subscription_id}",
-                    )
-                ],
+                ]
+            )
+        keyboard_rows.append(
+            [
+                InlineKeyboardButton(
+                    text="Завершить",
+                    callback_data=f"sa:cancel:{job.subscription_id}",
+                )
             ]
         )
+        keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
         try:
             message = await self._bot.send_message(
                 job.telegram_id,
@@ -59,7 +64,7 @@ class NotificationService:
                     message.message_id,
                 )
                 subscription = await session.get(Subscription, job.subscription_id)
-                if subscription is not None:
+                if subscription is not None and job.purchase_available:
                     subscription.status = SubscriptionStatus.NOTIFIED
                     subscription.notified_at = utc_now()
             logger.info(
@@ -79,12 +84,21 @@ class NotificationService:
 
     @staticmethod
     def format_message(job: NotificationJob) -> str:
+        if job.purchase_available:
+            title = "🎟 <b>Билеты доступны к покупке!</b>"
+            status_lines = ["✅ Продажа открыта, на Kino.kz есть свободные места."]
+        else:
+            title = "🎬 <b>Сеансы появились!</b>"
+            status_lines = [
+                "⏳ Купить билеты пока нельзя: Kino.kz ещё не открыл выбор мест.",
+                "Я продолжу проверять продажу и сообщу, когда покупка станет доступна.",
+            ]
         lines = [
-            "🎟 <b>Билеты появились!</b>",
+            title,
             "",
             f"«{escape_html(job.movie_title)}»",
             format_date_ru(job.target_date),
-            "✅ Продажа открыта, на Kino.kz есть свободные места.",
+            *status_lines,
         ]
         if job.cinema_scope == CinemaScope.SELECTED:
             tracked_names = ", ".join(escape_html(cinema.name) for cinema in job.cinemas)
@@ -106,7 +120,7 @@ class NotificationService:
                     details.append(", ".join(session.formats))
                 if session.language:
                     details.append(escape_html(session.language))
-                if session.minimum_price is not None:
+                if job.purchase_available and session.minimum_price is not None:
                     details.append(f"от {session.minimum_price:,} ₸".replace(",", " "))
                 lines.append("• " + " · ".join(details))
                 shown += 1

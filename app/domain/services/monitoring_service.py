@@ -34,6 +34,7 @@ class NotificationJob:
     cinema_scope: CinemaScope
     cinemas: tuple[CinemaDTO, ...]
     sessions: tuple[SessionDTO, ...]
+    purchase_available: bool
 
 
 @dataclass(slots=True)
@@ -213,23 +214,9 @@ class MonitoringService:
             )
             await self._mark_error(subscription.id, enrichment_error_code)
             return None
-        if sessions:
-            sessions, availability_errors = await self._purchasable_sessions(
-                subscription.city_id,
-                sessions,
-            )
-            if availability_errors and not sessions:
-                logger.warning(
-                    "ticket availability could not be confirmed subscription_id=%s errors=%s",
-                    subscription.id,
-                    availability_errors,
-                )
-                await self._mark_error(subscription.id, "KinoTicketAvailabilityError")
-                return None
-        if not sessions and not enrichment_failed:
+        if not sessions:
             logger.info(
-                "movie exists but has no purchasable sessions in tracked cinemas "
-                "subscription_id=%s "
+                "movie exists in city but not in tracked cinemas subscription_id=%s "
                 "cinema_ids=%s target_date=%s",
                 subscription.id,
                 sorted(cinema.id for cinema in cinemas),
@@ -237,13 +224,27 @@ class MonitoringService:
             )
             await self._mark_success(subscription.id)
             return None
+        purchasable, availability_errors = await self._purchasable_sessions(
+            subscription.city_id,
+            sessions,
+        )
+        purchase_available = bool(purchasable)
+        notification_sessions = purchasable if purchase_available else sessions
+        if availability_errors:
+            logger.warning(
+                "some ticket availability checks failed subscription_id=%s errors=%s "
+                "confirmed_open=%s",
+                subscription.id,
+                availability_errors,
+                len(purchasable),
+            )
         async with session_scope(self._session_factory) as session:
             current = await session.get(Subscription, subscription.id)
             if current is None:
                 return None
             notification = await NotificationsRepository(session).reserve(
                 subscription.id,
-                sessions,
+                notification_sessions,
                 target_date,
             )
             if notification is None:
@@ -260,8 +261,12 @@ class MonitoringService:
                 cinema_scope=subscription.cinema_scope,
                 cinemas=tuple(cinemas),
                 sessions=tuple(
-                    sorted(sessions, key=lambda item: (item.cinema_id, item.hour, item.minute))
+                    sorted(
+                        notification_sessions,
+                        key=lambda item: (item.cinema_id, item.hour, item.minute),
+                    )
                 ),
+                purchase_available=purchase_available,
             )
 
     async def _purchasable_sessions(

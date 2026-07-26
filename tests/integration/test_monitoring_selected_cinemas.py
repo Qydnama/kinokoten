@@ -1,4 +1,6 @@
 from datetime import UTC, date, datetime, timedelta
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import SecretStr
@@ -13,9 +15,10 @@ from app.domain.dto import (
     MovieSessionsDTO,
     SessionDTO,
 )
-from app.domain.enums import CinemaScope, TrackingMode
+from app.domain.enums import CinemaScope, SubscriptionStatus, TrackingMode
 from app.domain.services.catalog_service import CatalogService
 from app.domain.services.monitoring_service import MonitoringService, WorkerHeartbeat
+from app.domain.services.notification_service import NotificationService
 from app.domain.services.title_matcher import TitleMatcher
 from app.integrations.kino.exceptions import KinoUnavailableError
 from app.persistence.database import session_scope
@@ -209,13 +212,13 @@ async def test_city_match_does_not_notify_when_selected_cinemas_have_no_sessions
     assert due[0].id == subscription_id
 
 
-async def test_only_sessions_with_open_sales_and_free_seats_are_notified(
+async def test_schedule_then_open_sale_send_two_notifications(
     database: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     _, factory = database
     target_date = date.today() + timedelta(days=3)
-    subscription = await create_due_subscription(factory, target_date, "mixed-sales")
-    source = SessionsAvailabilitySource({2})
+    subscription = await create_due_subscription(factory, target_date, "two-stage-sales")
+    source = SessionsAvailabilitySource(set())
     settings = Settings(
         telegram_bot_token=SecretStr("123:example"),
         admin_telegram_id=1,
@@ -229,12 +232,52 @@ async def test_only_sessions_with_open_sales_and_free_seats_are_notified(
         WorkerHeartbeat(),
     )
 
-    job = await service._build_job(subscription, target_date, target_date)
+    schedule_job = await service._build_job(subscription, target_date, target_date)
 
-    assert job is not None
-    assert [item.session_id for item in job.sessions] == [2]
-    assert job.sessions[0].purchase_verified
-    assert job.sessions[0].source_key.endswith(":sale-open")
+    assert schedule_job is not None
+    assert not schedule_job.purchase_available
+    assert [item.session_id for item in schedule_job.sessions] == [1, 2]
+    assert all(not item.purchase_verified for item in schedule_job.sessions)
+
+    bot = AsyncMock()
+    bot.send_message.return_value = SimpleNamespace(message_id=777)
+    notifier = NotificationService(bot, factory)
+    assert await notifier.send(schedule_job)
+    async with session_scope(factory) as session:
+        stored = await session.get(Subscription, subscription.id)
+        assert stored is not None
+        assert stored.status == SubscriptionStatus.WAITING_TICKETS
+
+    source.purchasable_session_ids = {2}
+    sale_service = MonitoringService(
+        source,
+        CatalogService(source, factory, settings, TitleMatcher()),
+        factory,
+        settings,
+        WorkerHeartbeat(),
+    )
+    sale_job = await sale_service._build_job(subscription, target_date, target_date)
+
+    assert sale_job is not None
+    assert sale_job.purchase_available
+    assert [item.session_id for item in sale_job.sessions] == [2]
+    assert sale_job.sessions[0].purchase_verified
+    assert sale_job.sessions[0].source_key.endswith(":sale-open")
+    assert await notifier.send(sale_job)
+    async with session_scope(factory) as session:
+        stored = await session.get(Subscription, subscription.id)
+        assert stored is not None
+        assert stored.status == SubscriptionStatus.NOTIFIED
+
+    duplicate_service = MonitoringService(
+        source,
+        CatalogService(source, factory, settings, TitleMatcher()),
+        factory,
+        settings,
+        WorkerHeartbeat(),
+    )
+    duplicate = await duplicate_service._build_job(subscription, target_date, target_date)
+    assert duplicate is None
 
 
 @pytest.mark.parametrize(
@@ -244,7 +287,7 @@ async def test_only_sessions_with_open_sales_and_free_seats_are_notified(
         SessionsAvailabilitySource(set(), fail_availability=True),
     ],
 )
-async def test_closed_or_unverifiable_sales_do_not_notify(
+async def test_closed_or_unverifiable_sales_send_schedule_notification(
     database: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     source: SessionsAvailabilitySource,
 ) -> None:
@@ -272,5 +315,7 @@ async def test_closed_or_unverifiable_sales_do_not_notify(
 
     async with session_scope(factory) as session:
         notification_count = await session.scalar(select(func.count(Notification.id)))
-    assert job is None
-    assert notification_count == 0
+    assert job is not None
+    assert not job.purchase_available
+    assert [item.session_id for item in job.sessions] == [1, 2]
+    assert notification_count == 1

@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date
 
 from app.domain.dto import CinemaDTO, SessionDTO
@@ -29,6 +30,7 @@ def test_notification_escapes_external_text_and_formats_price() -> None:
                 formats=("IMAX",),
             ),
         ),
+        purchase_available=True,
     )
 
     text = NotificationService.format_message(job)
@@ -39,3 +41,9 @@ def test_notification_escapes_external_text_and_formats_price() -> None:
     assert "Продажа открыта" in text
     assert "от 4 000 ₸" in text
     assert "18:30" in text
+
+    schedule_text = NotificationService.format_message(replace(job, purchase_available=False))
+    assert "Сеансы появились" in schedule_text
+    assert "Купить билеты пока нельзя" in schedule_text
+    assert "продолжу проверять" in schedule_text
+    assert "от 4 000 ₸" not in schedule_text
